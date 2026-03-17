@@ -1,26 +1,33 @@
 """
 Data loading, splitting, preprocessing, and imbalance resampling.
+Implements the diabetes_012_health_indicators_BRFSS2015 dataset pipeline.
 """
 from __future__ import annotations
 
+import random
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
+from sklearn.feature_selection import SelectKBest, mutual_info_classif
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 
-# --- Constants (edit paths/seed/target as needed) ---
-ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
-CSV_PATH = DATA_DIR / "diabetes_012_health_indicators_BRFSS2015.csv"
+warnings.filterwarnings("ignore")
+
+# --- Constants ---
+ROOT = Path(__file__).resolve().parent
+CSV_PATH = ROOT / "diabetes_012_health_indicators_BRFSS2015.csv"
 SEED = 42
 TARGET_COL = "Diabetes_012"
-TRAIN_SIZE, VAL_SIZE, TEST_SIZE = 0.7, 0.1, 0.2
+K_FEATURES = 15  # Top-K features via mutual information
+
+# Fixed seeds for reproducibility
+random.seed(SEED)
+np.random.seed(SEED)
 
 
 @dataclass
@@ -31,6 +38,7 @@ class Splits:
     y_train: np.ndarray
     y_val: np.ndarray
     y_test: np.ndarray
+    feature_names: List[str] = None  # selected feature names (if FS used)
 
 
 def resample(
@@ -55,73 +63,86 @@ def resample(
 
 
 class FeatureSelector:
-    """Skeleton: plug in SelectKBest, SelectFromModel, or RFE later."""
+    """
+    SelectKBest with mutual_info_classif — selects top-K most informative features.
+    Fit only on training set to avoid data leakage.
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, k: int = K_FEATURES) -> None:
+        self.k = k
+        self._selector = SelectKBest(score_func=mutual_info_classif, k=k)
         self._fitted = False
+        self.selected_mask_: Optional[np.ndarray] = None
+        self.scores_: Optional[np.ndarray] = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "FeatureSelector":
-        # TODO: fit internal selector (e.g. SelectKBest)
+        self._selector.fit(X, y)
+        self.selected_mask_ = self._selector.get_support()
+        self.scores_ = self._selector.scores_
         self._fitted = True
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         if not self._fitted:
             raise RuntimeError("FeatureSelector not fitted.")
-        # TODO: return internal selector.transform(X)
-        return X
+        return self._selector.transform(X)
 
     def fit_transform(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
         self.fit(X, y)
         return self.transform(X)
 
 
-def _build_preprocessor(df: pd.DataFrame) -> Pipeline:
-    target = TARGET_COL
-    feature_cols = [c for c in df.columns if c != target]
-    numeric = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
-    categorical = [c for c in feature_cols if c not in numeric]
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", StandardScaler(), numeric),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
-        ]
-    )
-    return Pipeline(steps=[("preprocessor", preprocessor)])
-
-
-def prepare_data(use_feature_selection: bool = False) -> Splits:
+def prepare_data(use_feature_selection: bool = True) -> Splits:
     """
-    Load CSV, stratified 70/10/20 split, scale numerics, one-hot categoricals.
-    Optional feature selection (skeleton).
+    Load CSV → stratified 70/10/20 split → StandardScaler → optional SelectKBest.
+
+    Returns a Splits dataclass with numpy arrays ready for model training.
     """
+    # ── 1. Load ──────────────────────────────────────────────────────────────
     df = pd.read_csv(CSV_PATH)
     if TARGET_COL not in df.columns:
         raise ValueError(f"Target '{TARGET_COL}' not in CSV.")
 
-    X = df.drop(columns=[TARGET_COL])
-    y = df[TARGET_COL].values
+    TARGET = TARGET_COL
+    X = df.drop(columns=[TARGET])
+    y = df[TARGET].astype(int)
+    feature_names_all = X.columns.tolist()
 
-    X_train, X_temp, y_train, y_temp = train_test_split(
-        X, y, train_size=TRAIN_SIZE, stratify=y, random_state=SEED
+    # ── 2. Split (70 train / 10 val / 20 test, stratified) ──────────────────
+    # First split off 20 % test
+    X_trainval, X_test, y_trainval, y_test = train_test_split(
+        X, y, test_size=0.20, stratify=y, random_state=SEED
     )
-    val_ratio = VAL_SIZE / (VAL_SIZE + TEST_SIZE)
-    X_val, X_test, y_val, y_test = train_test_split(
-        X_temp, y_temp, test_size=1 - val_ratio, stratify=y_temp, random_state=SEED
+    # Then split remaining 80 % → 70 % train + 10 % val  (val = 10/80 = 0.125)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_trainval, y_trainval, test_size=0.125, stratify=y_trainval, random_state=SEED
     )
 
-    pipe = _build_preprocessor(df)
-    X_train = pipe.fit_transform(X_train)
-    X_val = pipe.transform(X_val)
-    X_test = pipe.transform(X_test)
+    # ── 3. Standard Scaling (fit only on train) ───────────────────────────────
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_val_scaled   = scaler.transform(X_val)
+    X_test_scaled  = scaler.transform(X_test)
 
+    # ── 4. Feature Selection (optional) ──────────────────────────────────────
+    selected_names = feature_names_all  # default: all
     if use_feature_selection:
-        fs = FeatureSelector()
-        X_train = fs.fit_transform(X_train, y_train)
-        X_val = fs.transform(X_val)
-        X_test = fs.transform(X_test)
+        fs = FeatureSelector(k=K_FEATURES)
+        X_train_scaled = fs.fit_transform(X_train_scaled, y_train.values)
+        X_val_scaled   = fs.transform(X_val_scaled)
+        X_test_scaled  = fs.transform(X_test_scaled)
+        selected_names = [
+            feature_names_all[i]
+            for i, keep in enumerate(fs.selected_mask_)
+            if keep
+        ]
 
     return Splits(
-        X_train=X_train, X_val=X_val, X_test=X_test,
-        y_train=y_train, y_val=y_val, y_test=y_test,
+        X_train=X_train_scaled,
+        X_val=X_val_scaled,
+        X_test=X_test_scaled,
+        y_train=y_train.values,
+        y_val=y_val.values,
+        y_test=y_test.values,
+        feature_names=selected_names,
     )
