@@ -1,0 +1,3 @@
+Model,Accuracy,F1_Micro,F1_Macro,F1_Weighted
+Softmax Baseline (class_weight='balanced'),0.6172,0.6172,0.4161,0.7004
+Softmax Balanced (UNDERSAMPLE),0.6174,0.6174,0.416,0.7004
