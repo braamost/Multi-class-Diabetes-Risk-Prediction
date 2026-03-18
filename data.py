@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore")
 
 # --- Constants ---
 ROOT = Path(__file__).resolve().parent
-CSV_PATH = ROOT / "diabetes_012_health_indicators_BRFSS2015.csv"
+CSV_PATH = ROOT / "data" / "diabetes_012_health_indicators_BRFSS2015.csv"
 SEED = 42
 TARGET_COL = "Diabetes_012"
 K_FEATURES = 15  # Top-K features via mutual information
@@ -28,7 +28,6 @@ K_FEATURES = 15  # Top-K features via mutual information
 # Fixed seeds for reproducibility
 random.seed(SEED)
 np.random.seed(SEED)
-
 
 @dataclass
 class Splits:
@@ -49,17 +48,14 @@ def resample(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Resample (X, y) to mitigate class imbalance.
-    method: "smote" | "undersample" | "none"
+    method: "smote" | "none"
     """
     if method == "none":
         return X, y
     if method == "smote":
         from imblearn.over_sampling import SMOTE
         return SMOTE(random_state=random_state).fit_resample(X, y)
-    if method == "undersample":
-        from imblearn.under_sampling import RandomUnderSampler
-        return RandomUnderSampler(random_state=random_state).fit_resample(X, y)
-    raise ValueError(f"Unknown method: {method}. Use 'smote', 'undersample', or 'none'.")
+    raise ValueError(f"Unknown method: {method}. Use 'smote' or 'none'.")
 
 
 class FeatureSelector:
@@ -98,7 +94,7 @@ def prepare_data(use_feature_selection: bool = True) -> Splits:
 
     Returns a Splits dataclass with numpy arrays ready for model training.
     """
-    # ── 1. Load ──────────────────────────────────────────────────────────────
+    # ── 1. Load 
     df = pd.read_csv(CSV_PATH)
     if TARGET_COL not in df.columns:
         raise ValueError(f"Target '{TARGET_COL}' not in CSV.")
@@ -108,7 +104,7 @@ def prepare_data(use_feature_selection: bool = True) -> Splits:
     y = df[TARGET].astype(int)
     feature_names_all = X.columns.tolist()
 
-    # ── 2. Split (70 train / 10 val / 20 test, stratified) ──────────────────
+    # ── 2. Split (70 train / 10 val / 20 test, stratified) 
     # First split off 20 % test
     X_trainval, X_test, y_trainval, y_test = train_test_split(
         X, y, test_size=0.20, stratify=y, random_state=SEED
@@ -118,13 +114,13 @@ def prepare_data(use_feature_selection: bool = True) -> Splits:
         X_trainval, y_trainval, test_size=0.125, stratify=y_trainval, random_state=SEED
     )
 
-    # ── 3. Standard Scaling (fit only on train) ───────────────────────────────
+    # ── 3. Standard Scaling (fit only on train)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled   = scaler.transform(X_val)
     X_test_scaled  = scaler.transform(X_test)
 
-    # ── 4. Feature Selection (optional) ──────────────────────────────────────
+    # ── 4. Feature Selection (optional)
     selected_names = feature_names_all  # default: all
     if use_feature_selection:
         fs = FeatureSelector(k=K_FEATURES)
