@@ -14,16 +14,18 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.utils.class_weight import compute_class_weight
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
 
-from data import resample, SEED
+from data import SEED, resample
 
 # ── Device ───────────────────────────────────────────────────────────────────
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -426,24 +428,120 @@ def train_fnn(
 
     # Move models to CPU before returning
     return model_baseline.cpu(), model_balanced.cpu()
-    """Simple configurable FNN kept for backward compatibility."""
 
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dims: Optional[List[int]] = None,
-        num_classes: int = 3,
-    ) -> None:
-        super().__init__()
-        if hidden_dims is None:
-            hidden_dims = [64, 32]
-        layers = []
-        prev = input_dim
-        for h in hidden_dims:
-            layers.extend([nn.Linear(prev, h), nn.ReLU()])
-            prev = h
-        layers.append(nn.Linear(prev, num_classes))
-        self.net = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+# ─────────────────────────────────────────────────────────────────────────────
+#  High-level pipelines for main.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def fnn_pipeline(splits) -> Dict:
+    """
+    Run the full FNN pipeline on provided splits and return predictions.
+
+    Does NOT print or plot; main/evaluate handle that.
+    """
+    fnn_baseline, fnn_balanced = train_fnn(
+        X_train=splits.X_train,
+        y_train=splits.y_train,
+        X_val=splits.X_val,
+        y_val=splits.y_val,
+        resample_method="smote",
+        input_dim=splits.X_train.shape[1],
+        epochs=50,
+        batch_size=512,
+        lr=1e-3,
+        weight_decay=1e-4,
+        tensorboard_logdir="runs",
+    )
+
+    preds_baseline = predict_fnn(fnn_baseline, splits.X_test)
+    preds_balanced = predict_fnn(fnn_balanced, splits.X_test)
+
+    return {
+        "name": "FNN",
+        "imb_method": "SMOTE",
+        "y_test": splits.y_test,
+        "y_pred_baseline": preds_baseline,
+        "y_pred_balanced": preds_balanced,
+        "label_baseline": "FNN Baseline (Imbalanced)",
+        "label_balanced": "FNN Balanced (SMOTE)",
+    }
+
+
+def knn_pipeline(splits) -> Dict:
+    """
+    Full KNN pipeline:
+    - Hyperparameter search over k and metric on validation set (imbalanced data).
+    - Search best imbalance method (SMOTE vs undersample) on validation.
+    - Final predictions for baseline and balanced models on the test set.
+    """
+    X_train, y_train = splits.X_train, splits.y_train
+    X_val, y_val = splits.X_val, splits.y_val
+    X_test, y_test = splits.X_test, splits.y_test
+
+    ks = [3, 5, 11, 21]
+    metrics = ["euclidean", "manhattan"]
+    methods = ["none", "smote"]
+
+
+    baseline_logs: List[Dict] = []
+    imbalance_logs: List[Dict] = []
+
+    best_baseline_score = -1.0
+    best_baseline_model: Optional[KNeighborsClassifier] = None
+
+    best_bal_score = -1.0
+    best_imb_method = None
+    best_balanced_model: Optional[KNeighborsClassifier] = None
+
+    for method in methods:
+        if method == "none":
+            X_tr, y_tr = X_train, y_train
+        else:
+            X_tr, y_tr = resample(X_train, y_train, method=method, random_state=SEED)
+
+        for k in ks:
+            for metric in metrics:
+                model = KNeighborsClassifier(n_neighbors=k, metric=metric)
+                model.fit(X_tr, y_tr)
+                val_pred = model.predict(X_val)
+                f1_macro = float(f1_score(y_val, val_pred, average="macro"))
+
+                row = {
+                    "method": method,
+                    "k": k,
+                    "metric": metric,
+                    "val_f1_macro": f1_macro,
+                }
+
+                if method == "none":
+                    baseline_logs.append(row)
+                    if f1_macro > best_baseline_score:
+                        best_baseline_score = f1_macro
+                        best_baseline_model = model
+                else:
+                    imbalance_logs.append(row)
+                    if f1_macro > best_bal_score:
+                        best_bal_score = f1_macro
+                        best_imb_method = method
+                        best_balanced_model = model
+
+    # Persist tuning logs to inspect why the choices were made.
+    if baseline_logs:
+        pd.DataFrame(baseline_logs).to_csv("knn_baseline_tuning.csv", index=False)
+    if imbalance_logs:
+        pd.DataFrame(imbalance_logs).to_csv("knn_imbalance_tuning.csv", index=False)
+
+    preds_baseline = best_baseline_model.predict(X_test)
+    preds_balanced = best_balanced_model.predict(X_test)
+
+    return {
+        "name": "KNN",
+        "imb_method": best_imb_method.upper(),
+        "y_test": y_test,
+        "y_pred_baseline": preds_baseline,
+        "y_pred_balanced": preds_balanced,
+        "label_baseline": "KNN Baseline (Imbalanced)",
+        "label_balanced": f"KNN Balanced ({best_imb_method.upper()})",
+    }
