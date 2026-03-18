@@ -1,0 +1,428 @@
+\documentclass[12pt,a4paper]{article}
+
+% ── Packages ─────────────────────────────────────────────────────────────────
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{listings}
+\usepackage{microtype}
+
+% ── Colours ───────────────────────────────────────────────────────────────────
+\definecolor{alexblue}{RGB}{0,62,120}
+\definecolor{lightgray}{RGB}{240,240,240}
+\definecolor{codegray}{RGB}{245,245,245}
+
+% ── Hyperref setup ────────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks=true,
+  linkcolor=alexblue,
+  urlcolor=alexblue,
+  citecolor=alexblue,
+}
+
+% ── Section formatting ────────────────────────────────────────────────────────
+\titleformat{\section}
+  {\large\bfseries\color{alexblue}}{\thesection}{1em}{}[\titlerule]
+\titleformat{\subsection}
+  {\normalsize\bfseries\color{alexblue}}{\thesubsection}{1em}{}
+
+% ── Header / Footer ───────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small CSE: Pattern Recognition -- Assignment \#1}
+\lhead{\small Alexandria University}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ── Code listing style ────────────────────────────────────────────────────────
+\lstset{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{lightgray},
+}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+
+% ── Title page ────────────────────────────────────────────────────────────────
+\begin{titlepage}
+  \centering
+  \vspace*{2cm}
+  {\Large\bfseries\color{alexblue} Alexandria University\\[0.3em]
+   Faculty of Engineering\\[0.3em]
+   Computer and Systems Engineering Department\par}
+  \vspace{1.5cm}
+  \rule{\linewidth}{1.5pt}\\[0.4em]
+  {\LARGE\bfseries Assignment \#1\\[0.4em]
+   Multi-class Diabetes Risk Prediction\par}
+  \rule{\linewidth}{1.5pt}
+  \vspace{1.5cm}
+  {\large\bfseries Module: K-Nearest Neighbours Classifier\par}
+  \vspace{2cm}
+  \begin{tabular}{ll}
+    \textbf{Course:}    & CSE -- Pattern Recognition \\[0.4em]
+    \textbf{Assigned:}  & Wednesday, 4 March 2026 \\[0.4em]
+    \textbf{Due:}       & Wednesday, 18 March 2026 \\[0.4em]
+    \textbf{Instructor:}& Prof.\ Dr.\ Marwan Torki \\[0.4em]
+    \textbf{TA:}        & Eng.\ Nour Eddine \\
+  \end{tabular}
+  \vfill
+  {\small \today}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+% ─────────────────────────────────────────────────────────────────────────────
+
+This report presents the K-Nearest Neighbours (KNN) component of Assignment~\#1, which
+addresses multi-class diabetes risk prediction using the
+\textit{Diabetes Health Indicators Dataset} (BRFSS~2015).  
+The dataset contains 21~patient attributes (e.g.\ BMI, age, high blood pressure,
+physical activity) and a three-class target variable:
+\textbf{0}~(No Diabetes), \textbf{1}~(Prediabetes), and \textbf{2}~(Diabetes).
+A central challenge is severe class imbalance: the Prediabetes class is
+substantially smaller than the other two.
+
+The goals of this module are to:
+\begin{enumerate}[label=(\roman*)]
+  \item tune a KNN classifier on the validation set across multiple values of $k$ and
+        two distance metrics;
+  \item train a baseline model on the original imbalanced data and a second model after
+        applying Synthetic Minority Oversampling (SMOTE);
+  \item evaluate both models on the held-out test set using accuracy, micro-, macro-,
+        and weighted F1-scores; and
+  \item analyse the confusion matrices and the impact of SMOTE on minority-class recall.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Data Preparation}
+% ─────────────────────────────────────────────────────────────────────────────
+
+The full data pipeline is implemented in \texttt{data.py}. The key steps are
+summarised below.
+
+\subsection{Train / Validation / Test Split}
+
+The dataset is partitioned with stratified sampling to preserve the original
+class distribution in each subset:
+
+\begin{center}
+\begin{tabular}{lrr}
+  \toprule
+  \textbf{Split} & \textbf{Fraction} & \textbf{Approx.\ samples} \\
+  \midrule
+  Training   & 70\% & 177{,}580 \\
+  Validation & 10\% & 25{,}369  \\
+  Test       & 20\% & 50{,}736  \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+A fixed random seed of \texttt{42} is used throughout to guarantee
+reproducibility, as required by the assignment.
+
+\subsection{Feature Preprocessing}
+
+All features are standardised with \texttt{StandardScaler} (zero mean,
+unit variance) fitted exclusively on the training partition.  
+This step is critical for KNN because the algorithm is distance-based; without
+scaling, high-variance features such as BMI would dominate the distance
+computation.
+
+\subsection{Feature Selection}
+
+To reduce dimensionality and remove uninformative features, \texttt{SelectKBest}
+with \texttt{mutual\_info\_classif} is used to retain the top $K = 15$ features
+out of the original~21.  
+The selector is fitted on the training set only to prevent data leakage, and the
+learned mask is then applied identically to the validation and test sets.
+
+\subsection{Class Imbalance}
+
+The original class distribution is heavily skewed towards No Diabetes.  
+The Prediabetes class (class~1) accounts for less than~2\% of all samples, making
+this a severe imbalance problem.  
+For the \textit{balanced} variant of KNN, Synthetic Minority Oversampling
+Technique (SMOTE) is applied to the training set after feature selection, generating
+synthetic interpolated samples for the minority classes until all three classes are
+equally represented.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{KNN Implementation and Hyperparameter Tuning}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Algorithm Overview}
+
+The K-Nearest Neighbours classifier is a non-parametric, instance-based learning
+algorithm.  Given a query point $\mathbf{x}$, it identifies the $k$ training
+samples closest in feature space and assigns the majority class label:
+
+\[
+  \hat{y}(\mathbf{x}) = \underset{c}{\arg\max}
+  \sum_{i \in \mathcal{N}_k(\mathbf{x})} \mathbf{1}[y_i = c],
+\]
+
+where $\mathcal{N}_k(\mathbf{x})$ is the set of $k$ nearest neighbours under a
+chosen distance metric.
+
+Two distance metrics were evaluated:
+
+\begin{itemize}
+  \item \textbf{Euclidean} ($L_2$):
+    $d(\mathbf{x},\mathbf{z}) = \sqrt{\sum_j (x_j - z_j)^2}$
+  \item \textbf{Manhattan} ($L_1$):
+    $d(\mathbf{x},\mathbf{z}) = \sum_j |x_j - z_j|$
+\end{itemize}
+
+\subsection{Hyperparameter Search}
+
+The search grid spans $k \in \{3, 5, 11, 21\}$ and both distance metrics.
+For each combination, a KNN model is trained on the appropriate training set
+(imbalanced for the baseline, SMOTE-resampled for the balanced variant) and
+evaluated on the validation set using \textbf{macro F1-score} -- the most
+informative metric for an imbalanced dataset (see Section~\ref{sec:metric}).
+
+\paragraph{Baseline search (imbalanced data).}
+
+\begin{center}
+\begin{tabular}{cccr}
+  \toprule
+  \textbf{Method} & $k$ & \textbf{Metric} & \textbf{Val.\ Macro F1} \\
+  \midrule
+  none & 3  & euclidean & 0.3935 \\
+  none & 3  & manhattan & \textbf{0.3955} \\
+  none & 5  & euclidean & 0.3904 \\
+  none & 5  & manhattan & 0.3917 \\
+  none & 11 & euclidean & 0.3784 \\
+  none & 11 & manhattan & 0.3816 \\
+  none & 21 & euclidean & 0.3763 \\
+  none & 21 & manhattan & 0.3728 \\
+  \bottomrule
+\end{tabular}
+\captionof{table}{Baseline (imbalanced) KNN hyperparameter grid on validation set.
+  Best configuration highlighted in bold.}
+\end{center}
+
+\paragraph{SMOTE search (balanced data).}
+
+\begin{center}
+\begin{tabular}{cccr}
+  \toprule
+  \textbf{Method} & $k$ & \textbf{Metric} & \textbf{Val.\ Macro F1} \\
+  \midrule
+  smote & 3  & euclidean & 0.3998 \\
+  smote & 3  & manhattan & 0.4036 \\
+  smote & 5  & euclidean & 0.3971 \\
+  smote & 5  & manhattan & \textbf{0.4065} \\
+  smote & 11 & euclidean & 0.3894 \\
+  smote & 11 & manhattan & 0.4041 \\
+  smote & 21 & euclidean & 0.3837 \\
+  smote & 21 & manhattan & 0.4007 \\
+  \bottomrule
+\end{tabular}
+\captionof{table}{SMOTE-balanced KNN hyperparameter grid on validation set.
+  Best configuration highlighted in bold.}
+\end{center}
+
+\paragraph{Selected configurations.}
+\begin{itemize}
+  \item \textbf{Baseline:} $k = 3$, Manhattan distance
+        (val.\ macro F1 $= 0.3955$).
+  \item \textbf{Balanced (SMOTE):} $k = 5$, Manhattan distance
+        (val.\ macro F1 $= 0.4065$).
+\end{itemize}
+
+Both searches consistently favour Manhattan distance over Euclidean and smaller
+values of $k$, suggesting that the decision boundaries in this 15-dimensional
+scaled feature space benefit from finer local structure.  Larger $k$ values lead
+to over-smoothing, blurring the boundaries around the minority Prediabetes class.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Evaluation}
+\label{sec:eval}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Metrics Reported}
+
+Four metrics are computed on the held-out test set:
+
+\begin{itemize}
+  \item \textbf{Accuracy:} fraction of correctly classified samples.
+  \item \textbf{Micro F1:} globally aggregated precision and recall across all
+        instances; equivalent to accuracy in a single-label setting.
+  \item \textbf{Macro F1:} unweighted mean of per-class F1-scores; each class
+        contributes equally regardless of size.
+  \item \textbf{Weighted F1:} mean of per-class F1-scores weighted by class support;
+        penalises poor performance on large classes more than on small ones.
+\end{itemize}
+
+\subsection{Which Metric Is Most Meaningful?}
+\label{sec:metric}
+
+For this severely imbalanced three-class problem, \textbf{macro F1-score} is the
+most informative metric.  Accuracy and micro F1 are dominated by the majority class
+(No Diabetes, $\approx 84\%$ of samples) and can appear deceptively high even when
+the model entirely ignores Prediabetes.  Weighted F1 down-weights the minority
+class contributions proportionally to support, again concealing poor minority-class
+performance.  Macro F1, by treating every class equally, directly penalises the
+model when it fails to recognise Prediabetes or Diabetes cases -- the clinically
+critical misclassifications.
+
+\subsection{Test Set Results}
+
+\begin{center}
+\begin{tabular}{lcccc}
+  \toprule
+  \textbf{Model} & \textbf{Accuracy} & \textbf{Micro F1}
+                 & \textbf{Macro F1} & \textbf{Weighted F1} \\
+  \midrule
+  KNN Baseline (Imbalanced) & 0.8215 & 0.8215 & 0.3992 & 0.7989 \\
+  KNN Balanced (SMOTE)      & 0.7080 & 0.7080 & 0.4101 & 0.7459 \\
+  \bottomrule
+\end{tabular}
+\captionof{table}{KNN test-set performance summary.}
+\end{center}
+
+\paragraph{Per-class breakdown.}
+
+\begin{center}
+\begin{tabular}{lcccc}
+  \toprule
+  \textbf{Class} & \textbf{Precision} & \textbf{Recall}
+                 & \textbf{F1} & \textbf{Support} \\
+  \midrule
+  \multicolumn{5}{l}{\textit{KNN Baseline (Imbalanced)}} \\
+  No Diabetes  & 0.87 & 0.94 & 0.90 & 42{,}741 \\
+  Prediabetes  & 0.05 & 0.00 & 0.01 &    926 \\
+  Diabetes     & 0.37 & 0.24 & 0.29 &  7{,}069 \\
+  \midrule
+  \multicolumn{5}{l}{\textit{KNN Balanced (SMOTE)}} \\
+  No Diabetes  & 0.91 & 0.76 & 0.82 & 42{,}741 \\
+  Prediabetes  & 0.03 & 0.08 & 0.04 &    926 \\
+  Diabetes     & 0.29 & 0.50 & 0.37 &  7{,}069 \\
+  \bottomrule
+\end{tabular}
+\captionof{table}{Per-class classification report for both KNN variants.}
+\end{center}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Confusion Matrices}
+% ─────────────────────────────────────────────────────────────────────────────
+
+Figure~\ref{fig:cm} shows the row-normalised confusion matrices for both KNN
+variants on the test set.  Raw sample counts are overlaid in grey.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{confusion_matrices_knn.png}
+  \caption{Row-normalised confusion matrices for KNN Baseline (left) and
+           KNN Balanced -- SMOTE (right) on the test set.
+           Cell values are row-normalised probabilities; grey annotations give
+           raw counts.}
+  \label{fig:cm}
+\end{figure}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Analysis and Discussion}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Impact of SMOTE on Performance}
+
+Comparing the two variants reveals a clear trade-off between overall accuracy and
+minority-class recall:
+
+\begin{itemize}
+  \item \textbf{Accuracy / Micro F1} drops from 0.8215 to 0.7080 after SMOTE.
+        This is expected: the model sacrifices some correct predictions for No
+        Diabetes in order to improve recall for the minority classes.
+
+  \item \textbf{Macro F1} \textit{improves} slightly from 0.3992 to 0.4101.
+        Although the gain is modest, it reflects a real improvement in the model's
+        ability to recognise Prediabetes and Diabetes cases.
+
+  \item \textbf{Diabetes recall} improves substantially from 0.24 to 0.50, meaning
+        the SMOTE model correctly identifies twice as many diabetic patients.
+        This is clinically significant.
+
+  \item \textbf{Prediabetes recall} improves from a near-zero~0.00 to 0.08.
+        The absolute level is still very low due to the extreme rarity of this class
+        ($<2\%$ of samples), but the direction of change is correct.
+
+  \item \textbf{No Diabetes recall} decreases from 0.94 to 0.76.  
+        A fraction of the majority class is now misclassified as Diabetes or
+        Prediabetes -- the cost of improved minority sensitivity.
+\end{itemize}
+
+\subsection{Misclassification Patterns}
+
+From Figure~\ref{fig:cm}, several patterns are evident:
+
+\paragraph{Baseline model.}
+The Prediabetes row is almost entirely classified as No Diabetes (0.84) or Diabetes
+(0.15), with only 3 out of 926 Prediabetes instances correctly identified.  
+The model has effectively learnt to ignore Prediabetes due to its negligible share
+of the training data.  Diabetes recall is also modest at 0.24, with 76\% of diabetic
+patients misclassified as No Diabetes.
+
+\paragraph{Balanced (SMOTE) model.}
+Prediabetes confusion is redistributed: 53\% are misclassified as No Diabetes and
+39\% as Diabetes.  The diagonal entry rises from 0.00 to 0.08, indicating the model
+has learned at least some Prediabetes signal.  Diabetes recall jumps to 0.50, but
+a large proportion (0.41) of diabetic patients are still predicted as No Diabetes.
+
+\paragraph{Clinical interpretation.}
+The systematic confusion between Prediabetes and No Diabetes arises partly because
+prediabetes is a \emph{transitional} state; its physiological markers (e.g.\ slightly
+elevated BMI or borderline blood pressure) overlap substantially with the healthy
+class.  Mathematically, KNN's local neighbourhood in this 15-dimensional feature
+space tends to be dominated by No Diabetes neighbours due to its overwhelming
+prevalence, even after SMOTE resampling of the training set.
+
+\subsection{Strengths and Limitations of KNN}
+
+\begin{itemize}
+  \item \textbf{Strengths:} no parametric assumptions; directly captures non-linear
+        decision boundaries; easy to interpret ($k$ nearest examples).
+  \item \textbf{Limitations:} inference time scales with training set size ($O(n)$
+        per query), making it expensive on the full BRFSS dataset;
+        susceptible to the curse of dimensionality; does not naturally model
+        posterior class probabilities; highly sensitive to irrelevant features even
+        after feature selection.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+% ─────────────────────────────────────────────────────────────────────────────
+
+The KNN classifier was tuned over a grid of $k \in \{3, 5, 11, 21\}$ and two
+distance metrics using macro F1-score on the validation set.  The best
+configuration for the baseline was $k=3$, Manhattan distance, and for the
+SMOTE-balanced variant $k=5$, Manhattan distance.
+
+SMOTE modestly improved macro F1 from 0.3992 to 0.4101 and substantially improved
+Diabetes recall (0.24 $\to$ 0.50), demonstrating its value for surfacing
+minority-class patterns.  However, Prediabetes recall remains very low in both
+variants due to the extreme class imbalance and the high degree of feature-space
+overlap with the No Diabetes class.
+
+These results motivate the subsequent evaluation of more expressive models
+(Softmax Regression and Feedforward Neural Network) which may better separate the
+overlapping class regions through learned non-linear transformations.
+
+\end{document}

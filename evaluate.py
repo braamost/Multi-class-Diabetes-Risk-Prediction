@@ -98,3 +98,41 @@ def plot_confusion_matrix(
     if own_fig:
         plt.tight_layout()
         plt.show()
+
+
+def summarize_and_save(
+    y_true: np.ndarray,
+    predictions: dict,
+    model_family: str,
+) -> None:
+    """
+    Given a dict {label -> y_pred}, print metrics, build a summary table,
+    and save summary + confusion matrices to disk.
+    """
+    results = []
+    for label, y_pred in predictions.items():
+        results.append(compute_metrics(y_true, y_pred, label))
+
+    import pandas as pd
+
+    df = pd.DataFrame(results).set_index("Model").round(4)
+    print(f"\n===== {model_family} Summary Table =====")
+    print(df.to_string())
+
+    csv_name = f"results_summary_{model_family.lower()}.csv"
+    df.to_csv(csv_name)
+    print(f"Saved: {csv_name}")
+
+    # Confusion matrix grid
+    n = len(predictions)
+    fig, axes = plt.subplots(1, n, figsize=(7 * n, 5))
+    if n == 1:
+        axes = [axes]
+    for ax, (label, y_pred) in zip(axes, predictions.items()):
+        plot_confusion_matrix(y_true, y_pred, title=label, ax=ax)
+    plt.suptitle(f"{model_family} – Confusion Matrices (Test Set)", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    png_name = f"confusion_matrices_{model_family.lower()}.png"
+    plt.savefig(png_name, dpi=150)
+    plt.show()
+    print(f"Saved: {png_name}")
