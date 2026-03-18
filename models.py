@@ -22,8 +22,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.utils.class_weight import compute_class_weight
-from torch.utils.data import DataLoader, TensorDataset
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.data import DataLoader, TensorDataset
+# from torch.utils.tensorboard import SummaryWriter
 
 from data import SEED, resample
 

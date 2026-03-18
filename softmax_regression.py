@@ -229,13 +229,13 @@ def run_softmax_section(
 if __name__ == "__main__":
     print("Loading and preparing data …")
     # Let's turn off polynomial features to avoid the noise and keep it fast
-    splits = prepare_data(use_feature_selection=True, use_polynomial_features=True)
+    splits = prepare_data(use_feature_selection=True, use_polynomial_features=False)
     print(f"Train : {splits.X_train.shape[0]:>7}   features={splits.X_train.shape[1]}")
     print(f"Val   : {splits.X_val.shape[0]:>7}")
     print(f"Test  : {splits.X_test.shape[0]:>7}\n")
 
     # Switch to undersampling instead of SMOTE
-    results = run_softmax_section(splits, resample_method="undersample")
+    results = run_softmax_section(splits, resample_method="smote")
 
     # Summary table
     summary_df = pd.DataFrame(results).set_index("Model").round(4)
