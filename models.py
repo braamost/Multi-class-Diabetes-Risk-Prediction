@@ -545,3 +545,33 @@ def knn_pipeline(splits) -> Dict:
         "label_baseline": "KNN Baseline (Imbalanced)",
         "label_balanced": f"KNN Balanced ({best_imb_method.upper()})",
     }
+
+def softmax_pipeline(splits) -> Dict:
+    """
+    Full Softmax Regression pipeline:
+    - Tune C on validation set (by macro-F1)
+    - Train baseline (class_weight='balanced') and balanced (SMOTE)
+    - Return predictions on test set
+    """
+    from softmax_regression import tune_softmax_C, train_softmax_regression
+
+    best_C, _ = tune_softmax_C(
+        splits.X_train, splits.y_train,
+        splits.X_val,   splits.y_val,
+    )
+
+    sm_baseline, sm_balanced = train_softmax_regression(
+        splits.X_train, splits.y_train,
+        C=best_C,
+        resample_method="smote",
+    )
+
+    return {
+        "name": "Softmax",
+        "imb_method": "SMOTE",
+        "y_test": splits.y_test,
+        "y_pred_baseline": sm_baseline.predict(splits.X_test),
+        "y_pred_balanced": sm_balanced.predict(splits.X_test),
+        "label_baseline": "Softmax Baseline (class_weight='balanced')",
+        "label_balanced": "Softmax Balanced (SMOTE)",
+    }

@@ -15,7 +15,7 @@ import numpy as np
 
 from data import SEED, prepare_data
 from evaluate import summarize_and_save
-from models import fnn_pipeline, knn_pipeline
+from models import fnn_pipeline, knn_pipeline, softmax_pipeline
 
 np.random.seed(SEED)
 
@@ -40,8 +40,7 @@ def main() -> None:
         out = knn_pipeline(splits)
 
     elif MODEL_TYPE == "softmax":
-        # TODO: Implement Softmax regression pipeline
-        raise NotImplementedError("Softmax regression pipeline not implemented yet in main.py.")
+        out = softmax_pipeline(splits)
 
     else:
         raise ValueError(f"Unknown MODEL_TYPE: {MODEL_TYPE}")
