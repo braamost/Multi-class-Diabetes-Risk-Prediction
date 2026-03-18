@@ -35,24 +35,82 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #  KNN
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_knn(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    resample_method: str = "smote",
-    n_neighbors: int = 5,
-    metric: str = "minkowski",
-    random_state: int = SEED,
-) -> Tuple[KNeighborsClassifier, KNeighborsClassifier]:
-    """Train baseline (original data) and balanced (resampled) KNN."""
-    baseline = KNeighborsClassifier(n_neighbors=n_neighbors, metric=metric)
-    baseline.fit(X_train, y_train)
+def knn_pipeline(splits) -> Dict:
+    """
+    Full KNN pipeline:
+    - Hyperparameter search over k and metric on validation set (imbalanced data).
+    - Search best imbalance method (SMOTE vs undersample) on validation.
+    - Final predictions for baseline and balanced models on the test set.
+    """
+    X_train, y_train = splits.X_train, splits.y_train
+    X_val, y_val = splits.X_val, splits.y_val
+    X_test, y_test = splits.X_test, splits.y_test
 
-    X_bal, y_bal = resample(X_train, y_train, method=resample_method, random_state=random_state)
-    balanced = KNeighborsClassifier(n_neighbors=n_neighbors, metric=metric)
-    balanced.fit(X_bal, y_bal)
+    ks = [3, 5, 11, 21]
+    metrics = ["euclidean", "manhattan"]
+    methods = ["none", "smote"]
 
-    return baseline, balanced
 
+    baseline_logs: List[Dict] = []
+    imbalance_logs: List[Dict] = []
+
+    best_baseline_score = -1.0
+    best_baseline_model: Optional[KNeighborsClassifier] = None
+
+    best_bal_score = -1.0
+    best_imb_method = None
+    best_balanced_model: Optional[KNeighborsClassifier] = None
+
+    for method in methods:
+        if method == "none":
+            X_tr, y_tr = X_train, y_train
+        else:
+            X_tr, y_tr = resample(X_train, y_train, method=method, random_state=SEED)
+
+        for k in ks:
+            for metric in metrics:
+                model = KNeighborsClassifier(n_neighbors=k, metric=metric)
+                model.fit(X_tr, y_tr)
+                val_pred = model.predict(X_val)
+                f1_macro = float(f1_score(y_val, val_pred, average="macro"))
+
+                row = {
+                    "method": method,
+                    "k": k,
+                    "metric": metric,
+                    "val_f1_macro": f1_macro,
+                }
+
+                if method == "none":
+                    baseline_logs.append(row)
+                    if f1_macro > best_baseline_score:
+                        best_baseline_score = f1_macro
+                        best_baseline_model = model
+                else:
+                    imbalance_logs.append(row)
+                    if f1_macro > best_bal_score:
+                        best_bal_score = f1_macro
+                        best_imb_method = method
+                        best_balanced_model = model
+
+    # Persist tuning logs to inspect why the choices were made.
+    if baseline_logs:
+        pd.DataFrame(baseline_logs).to_csv("knn_baseline_tuning.csv", index=False)
+    if imbalance_logs:
+        pd.DataFrame(imbalance_logs).to_csv("knn_imbalance_tuning.csv", index=False)
+
+    preds_baseline = best_baseline_model.predict(X_test)
+    preds_balanced = best_balanced_model.predict(X_test)
+
+    return {
+        "name": "KNN",
+        "imb_method": best_imb_method.upper(),
+        "y_test": y_test,
+        "y_pred_baseline": preds_baseline,
+        "y_pred_balanced": preds_balanced,
+        "label_baseline": "KNN Baseline (Imbalanced)",
+        "label_balanced": f"KNN Balanced ({best_imb_method.upper()})",
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Softmax (multinomial logistic) regression
@@ -468,80 +526,3 @@ def fnn_pipeline(splits) -> Dict:
         "label_balanced": "FNN Balanced (SMOTE)",
     }
 
-
-def knn_pipeline(splits) -> Dict:
-    """
-    Full KNN pipeline:
-    - Hyperparameter search over k and metric on validation set (imbalanced data).
-    - Search best imbalance method (SMOTE vs undersample) on validation.
-    - Final predictions for baseline and balanced models on the test set.
-    """
-    X_train, y_train = splits.X_train, splits.y_train
-    X_val, y_val = splits.X_val, splits.y_val
-    X_test, y_test = splits.X_test, splits.y_test
-
-    ks = [3, 5, 11, 21]
-    metrics = ["euclidean", "manhattan"]
-    methods = ["none", "smote"]
-
-
-    baseline_logs: List[Dict] = []
-    imbalance_logs: List[Dict] = []
-
-    best_baseline_score = -1.0
-    best_baseline_model: Optional[KNeighborsClassifier] = None
-
-    best_bal_score = -1.0
-    best_imb_method = None
-    best_balanced_model: Optional[KNeighborsClassifier] = None
-
-    for method in methods:
-        if method == "none":
-            X_tr, y_tr = X_train, y_train
-        else:
-            X_tr, y_tr = resample(X_train, y_train, method=method, random_state=SEED)
-
-        for k in ks:
-            for metric in metrics:
-                model = KNeighborsClassifier(n_neighbors=k, metric=metric)
-                model.fit(X_tr, y_tr)
-                val_pred = model.predict(X_val)
-                f1_macro = float(f1_score(y_val, val_pred, average="macro"))
-
-                row = {
-                    "method": method,
-                    "k": k,
-                    "metric": metric,
-                    "val_f1_macro": f1_macro,
-                }
-
-                if method == "none":
-                    baseline_logs.append(row)
-                    if f1_macro > best_baseline_score:
-                        best_baseline_score = f1_macro
-                        best_baseline_model = model
-                else:
-                    imbalance_logs.append(row)
-                    if f1_macro > best_bal_score:
-                        best_bal_score = f1_macro
-                        best_imb_method = method
-                        best_balanced_model = model
-
-    # Persist tuning logs to inspect why the choices were made.
-    if baseline_logs:
-        pd.DataFrame(baseline_logs).to_csv("knn_baseline_tuning.csv", index=False)
-    if imbalance_logs:
-        pd.DataFrame(imbalance_logs).to_csv("knn_imbalance_tuning.csv", index=False)
-
-    preds_baseline = best_baseline_model.predict(X_test)
-    preds_balanced = best_balanced_model.predict(X_test)
-
-    return {
-        "name": "KNN",
-        "imb_method": best_imb_method.upper(),
-        "y_test": y_test,
-        "y_pred_baseline": preds_baseline,
-        "y_pred_balanced": preds_balanced,
-        "label_baseline": "KNN Baseline (Imbalanced)",
-        "label_balanced": f"KNN Balanced ({best_imb_method.upper()})",
-    }
