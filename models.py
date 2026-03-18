@@ -18,7 +18,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.utils.class_weight import compute_class_weight
@@ -116,30 +115,35 @@ def knn_pipeline(splits) -> Dict:
 #  Softmax (multinomial logistic) regression
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_softmax_regression(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    resample_method: str = "smote",
-    C: float = 1.0,
-    max_iter: int = 1000,
-    class_weight: Optional[Dict[int, float]] = None,
-    random_state: int = SEED,
-) -> Tuple[LogisticRegression, LogisticRegression]:
-    """Train baseline and balanced Softmax regression."""
-    baseline = LogisticRegression(
-        C=C, max_iter=max_iter, multi_class="multinomial", solver="lbfgs",
-        class_weight=class_weight,
-    )
-    baseline.fit(X_train, y_train)
+def softmax_pipeline(splits) -> Dict:
+    """
+    Full Softmax Regression pipeline:
+    - Tune C on validation set (by macro-F1)
+    - Train baseline (class_weight='balanced') and balanced (SMOTE)
+    - Return predictions on test set
+    """
+    from softmax_regression import tune_softmax_C, train_softmax_regression
 
-    X_bal, y_bal = resample(X_train, y_train, method=resample_method, random_state=random_state)
-    balanced = LogisticRegression(
-        C=C, max_iter=max_iter, multi_class="multinomial", solver="lbfgs",
-        class_weight=class_weight,
+    best_C, _ = tune_softmax_C(
+        splits.X_train, splits.y_train,
+        splits.X_val,   splits.y_val,
     )
-    balanced.fit(X_bal, y_bal)
 
-    return baseline, balanced
+    sm_baseline, sm_balanced = train_softmax_regression(
+        splits.X_train, splits.y_train,
+        C=best_C,
+        resample_method="smote",
+    )
+
+    return {
+        "name": "Softmax",
+        "imb_method": "SMOTE",
+        "y_test": splits.y_test,
+        "y_pred_baseline": sm_baseline.predict(splits.X_test),
+        "y_pred_balanced": sm_balanced.predict(splits.X_test),
+        "label_baseline": "Softmax Baseline (class_weight='balanced')",
+        "label_balanced": "Softmax Balanced (SMOTE)",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -525,4 +529,3 @@ def fnn_pipeline(splits) -> Dict:
         "label_baseline": "FNN Baseline (Imbalanced)",
         "label_balanced": "FNN Balanced (SMOTE)",
     }
-
